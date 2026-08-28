@@ -78,6 +78,11 @@ module.exports = () => ({
 
     extra: {
       twitchClientId: process.env.EXPO_PUBLIC_TWITCH_CLIENT_ID ?? '',
+      // Adres strony-pomostu na GitHub Pages. To jest redirect_uri wysylany
+      // do Twitcha (musi byc HTTPS - custom scheme jest odrzucany).
+      // NIE mylic z APP_CALLBACK_URL w src/auth/config.ts, ktory zostaje
+      // twitchvod://auth i sluzy do powrotu ze strony-pomostu do aplikacji.
+      authBridgeUrl: process.env.EXPO_PUBLIC_AUTH_BRIDGE_URL ?? '',
     },
   },
 });

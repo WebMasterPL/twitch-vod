@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../../src/auth/AuthContext';
-import { TWITCH_REDIRECT_URI } from '../../src/auth/config';
+import { APP_CALLBACK_URL, AUTH_BRIDGE_URL } from '../../src/auth/config';
 import { colors, radius, spacing } from '../../src/theme';
 
 function Row({ label, value }: { label: string; value: string }) {
@@ -62,7 +62,8 @@ export default function SettingsScreen() {
       <View style={styles.card}>
         <Text style={styles.cardTitle}>Sesja</Text>
         <Row label="Tryb OAuth" value="implicit grant" />
-        <Row label="Redirect URI" value={TWITCH_REDIRECT_URI} />
+        <Row label="Redirect URI (Twitch)" value={AUTH_BRIDGE_URL || '—'} />
+        <Row label="Powrót do aplikacji" value={APP_CALLBACK_URL} />
         <Row label="Zakresy" value={user?.scopes.join(', ') || '—'} />
         <Row label="Token wygasa" value={expiresLabel} />
         <Row label="Odświeżanie" value="brak — po wygaśnięciu ponowne logowanie" />

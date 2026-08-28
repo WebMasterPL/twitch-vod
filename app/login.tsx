@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '../src/auth/AuthContext';
-import { TWITCH_REDIRECT_URI, configProblems } from '../src/auth/config';
+import { APP_CALLBACK_URL, AUTH_BRIDGE_URL, configProblems } from '../src/auth/config';
 import { AuthCancelled } from '../src/auth/twitchAuth';
 import { colors, radius, spacing } from '../src/theme';
 
@@ -78,7 +78,10 @@ export default function LoginScreen() {
 
       <View style={styles.footer}>
         <Text style={styles.footerText}>Tryb OAuth: implicit grant</Text>
-        <Text style={styles.footerText}>Redirect URI: {TWITCH_REDIRECT_URI}</Text>
+        <Text style={styles.footerText}>
+          Redirect URI (Twitch): {AUTH_BRIDGE_URL || '— nie ustawiono —'}
+        </Text>
+        <Text style={styles.footerText}>Powrót do aplikacji: {APP_CALLBACK_URL}</Text>
         <Text style={styles.footerText}>Zakres uprawnień: user:read:follows</Text>
       </View>
     </ScrollView>

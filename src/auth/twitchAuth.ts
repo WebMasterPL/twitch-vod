@@ -1,12 +1,13 @@
-import * as AuthSession from 'expo-auth-session';
+import * as Crypto from 'expo-crypto';
 import * as WebBrowser from 'expo-web-browser';
 
 import {
+  APP_CALLBACK_URL,
+  AUTH_BRIDGE_URL,
   HELIX_BASE,
   SCOPES,
   TWITCH_CLIENT_ID,
   TWITCH_ENDPOINTS,
-  TWITCH_REDIRECT_URI,
   configProblems,
 } from './config';
 import type { StoredSession } from './tokenStore';
@@ -27,11 +28,6 @@ export class AuthCancelled extends Error {
     this.name = 'AuthCancelled';
   }
 }
-
-const discovery: AuthSession.DiscoveryDocument = {
-  authorizationEndpoint: TWITCH_ENDPOINTS.authorization,
-  revocationEndpoint: TWITCH_ENDPOINTS.revocation,
-};
 
 type ValidateResponse = {
   client_id: string;
@@ -100,47 +96,114 @@ function assertConfigured(): void {
   }
 }
 
+/** Losowy state do powiazania odpowiedzi z tym konkretnym zadaniem. */
+async function createState(): Promise<string> {
+  const bytes = await Crypto.getRandomBytesAsync(32);
+  return Array.from(bytes)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 /**
- * Implicit grant: Twitch zwraca access_token bezposrednio we fragmencie
- * redirectu. Nie ma refresh tokena - po wygasnieciu (ok. 60 dni) albo po
- * odpowiedzi 401 z Helixa czyscimy sesje i wracamy na ekran logowania.
+ * Wyciaga parametry z adresu powrotnego.
  *
- * Authorization Code odpada, bo Twitch wymaga przy wymianie kodu
- * client_secret, a ten nie moze trafic do bundla aplikacji sideloadowanej.
+ * Token przychodzi we fragmencie (po #), ale bledy Twitch potrafi zwrocic
+ * w query stringu, wiec czytamy oba i laczymy - fragment ma pierwszenstwo.
+ * Rozbijamy recznie zamiast przez URL, bo custom scheme bywa parsowany
+ * niekonsekwentnie miedzy silnikami.
+ */
+function parseCallbackParams(url: string): URLSearchParams {
+  const merged = new URLSearchParams();
+
+  const hashIndex = url.indexOf('#');
+  const fragment = hashIndex >= 0 ? url.slice(hashIndex + 1) : '';
+
+  const withoutFragment = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
+  const queryIndex = withoutFragment.indexOf('?');
+  const query = queryIndex >= 0 ? withoutFragment.slice(queryIndex + 1) : '';
+
+  for (const source of [query, fragment]) {
+    if (!source) continue;
+    for (const [key, value] of new URLSearchParams(source)) {
+      merged.set(key, value);
+    }
+  }
+
+  return merged;
+}
+
+function buildAuthorizeUrl(state: string): string {
+  const params = new URLSearchParams({
+    client_id: TWITCH_CLIENT_ID,
+    // Twitch dostaje adres strony-pomostu (HTTPS), nie schemat aplikacji.
+    redirect_uri: AUTH_BRIDGE_URL,
+    response_type: 'token',
+    scope: SCOPES.join(' '),
+    state,
+    // Twitch domyslnie pomija ekran zgody przy ponownym logowaniu; wymuszamy go,
+    // zeby dalo sie swiadomie przelaczyc konto.
+    force_verify: 'true',
+  });
+  return `${TWITCH_ENDPOINTS.authorization}?${params.toString()}`;
+}
+
+/**
+ * Implicit grant przez strone-pomost.
+ *
+ * Twitch -> AUTH_BRIDGE_URL (HTTPS, GitHub Pages) -> APP_CALLBACK_URL.
+ * Strona-pomost przepisuje fragment adresu 1:1, wiec token nigdy nie trafia
+ * do zadania HTTP - przegladarki nie wysylaja fragmentu na serwer.
+ *
+ * Nie ma refresh tokena - po wygasnieciu (ok. 60 dni) albo po odpowiedzi 401
+ * z Helixa czyscimy sesje i wracamy na ekran logowania. Authorization Code
+ * odpada, bo Twitch wymaga przy wymianie kodu client_secret, a ten nie moze
+ * trafic do bundla aplikacji sideloadowanej.
  */
 export async function signIn(): Promise<StoredSession> {
   assertConfigured();
 
-  const request = new AuthSession.AuthRequest({
-    clientId: TWITCH_CLIENT_ID,
-    redirectUri: TWITCH_REDIRECT_URI,
-    scopes: SCOPES,
-    responseType: AuthSession.ResponseType.Token,
-    usePKCE: false,
-    // Twitch domyslnie pomija ekran zgody przy ponownym logowaniu; wymuszamy go,
-    // zeby dalo sie swiadomie przelaczyc konto.
-    extraParams: { force_verify: 'true' },
-  });
+  const state = await createState();
 
-  const result = await request.promptAsync(discovery);
+  const result = await WebBrowser.openAuthSessionAsync(
+    buildAuthorizeUrl(state),
+    // Callback scheme dla ASWebAuthenticationSession - to NIE jest redirect_uri.
+    APP_CALLBACK_URL
+  );
 
+  // Zamkniecie okna krzyzykiem albo gestem wstecz.
   if (result.type === 'cancel' || result.type === 'dismiss') {
     throw new AuthCancelled();
   }
   if (result.type !== 'success') {
-    const description =
-      result.type === 'error'
-        ? result.error?.description ?? result.error?.message
-        : undefined;
-    throw new AuthError(description ?? 'Logowanie nie powiodlo sie');
+    throw new AuthError('Logowanie nie powiodlo sie');
   }
 
-  const accessToken = result.params.access_token ?? result.authentication?.accessToken;
+  const params = parseCallbackParams(result.url);
+
+  const error = params.get('error');
+  if (error) {
+    // Uzytkownik kliknal "Odmow" na ekranie zgody Twitcha.
+    if (error === 'access_denied') {
+      throw new AuthCancelled();
+    }
+    // URLSearchParams samo dekoduje %XX i "+", wiec opis jest juz czytelny.
+    const description = params.get('error_description');
+    throw new AuthError(description || error);
+  }
+
+  const returnedState = params.get('state');
+  if (!returnedState || returnedState !== state) {
+    throw new AuthError(
+      'Niezgodny parametr state - odpowiedz nie pasuje do zadania logowania.'
+    );
+  }
+
+  const accessToken = params.get('access_token');
   if (!accessToken) {
     throw new AuthError('Twitch nie zwrocil access_token');
   }
 
-  const expiresIn = Number(result.params.expires_in);
+  const expiresIn = Number(params.get('expires_in'));
   return buildSession(accessToken, Number.isFinite(expiresIn) ? expiresIn : undefined);
 }
 

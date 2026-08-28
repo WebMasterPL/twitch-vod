@@ -33,23 +33,77 @@ pokazująca metadane VOD-a.
 
 1. Wejdź na <https://dev.twitch.tv/console/apps> i kliknij **Register Your Application**.
 2. **Name** — dowolna, unikalna w skali Twitcha (np. `Moj VOD Player`).
-3. **OAuth Redirect URLs** — wpisz dokładnie, bez końcowego ukośnika:
+3. **OAuth Redirect URLs** — adres strony-pomostu na GitHub Pages,
+   **z ukośnikiem na końcu**:
 
    ```
-   twitchvod://auth
+   https://TWOJ-LOGIN.github.io/twitchvod-auth/
    ```
 
-   Twitch porównuje ten adres znak w znak. To **jedyny** poprawny redirect —
-   nie używaj `pl.easywebstart.twitchvod://`, mimo że ten schemat też jest
-   zarejestrowany w Info.plist (patrz sekcja 2).
+   Twitch porównuje ten adres znak w znak — brak końcowego ukośnika
+   albo literówka w loginie skończy się błędem „redirect mismatch".
+   Konsola Twitcha **nie przyjmuje** custom scheme (`twitchvod://`), stąd ta
+   strona pośrednia; jak ją postawić, opisuje sekcja 2a.
 4. **Category** — `Application Integration`.
 5. **Client Type** — `Public`.
 6. Zapisz **Client ID**. Client Secret **nie jest potrzebny**.
 
-## 2. Uwierzytelnianie — implicit grant
+## 2. Uwierzytelnianie — implicit grant przez stronę-pomost
 
 Aplikacja używa **implicit grant**: Twitch zwraca `access_token` bezpośrednio
 we fragmencie redirectu, bez wymiany kodu i bez sekretu.
+
+W przepływie występują **dwa różne adresy powrotu** — łatwo je pomylić:
+
+| Stała | Wartość | Kto jej używa |
+|---|---|---|
+| `AUTH_BRIDGE_URL` | `https://TWOJ-LOGIN.github.io/twitchvod-auth/` | trafia do Twitcha jako `redirect_uri`; wpisany w Developer Console |
+| `APP_CALLBACK_URL` | `twitchvod://auth` | callback scheme dla `ASWebAuthenticationSession`; Twitch go **nie zna** |
+
+Droga tokena:
+
+```
+aplikacja → id.twitch.tv/oauth2/authorize?redirect_uri=<AUTH_BRIDGE_URL>
+          → GitHub Pages: /twitchvod-auth/#access_token=…&state=…
+          → window.location.replace("twitchvod://auth" + hash)
+          → ASWebAuthenticationSession przechwytuje → aplikacja
+```
+
+Token jedzie we **fragmencie** adresu (po `#`). Przeglądarki nie wysyłają
+fragmentu w żądaniu HTTP, więc token nie trafia do logów GitHub Pages ani do
+żadnego pośrednika — widzi go tylko skrypt na stronie i aplikacja.
+
+Aplikacja generuje losowy `state` (32 bajty z `expo-crypto`) i odrzuca
+odpowiedź, w której `state` się nie zgadza.
+
+### 2a. Postawienie strony-pomostu
+
+1. Utwórz **publiczne** repo o nazwie `twitchvod-auth` (musi być publiczne —
+   GitHub Pages na darmowym koncie nie działa z prywatnych repo).
+2. Wrzuć do niego plik `index.html` z folderu `../twitchvod-auth/`
+   (leży obok tego projektu):
+
+   ```bash
+   cd ../twitchvod-auth
+   git init && git add index.html
+   git commit -m "OAuth bridge page"
+   git branch -M main
+   git remote add origin https://github.com/TWOJ-LOGIN/twitchvod-auth.git
+   git push -u origin main
+   ```
+
+3. W repo: **Settings → Pages**. W sekcji *Build and deployment* ustaw
+   **Source: Deploy from a branch**, **Branch: `main`**, folder **`/ (root)`**,
+   kliknij **Save**.
+4. Odczekaj 1–2 minuty i wejdź na `https://TWOJ-LOGIN.github.io/twitchvod-auth/`.
+   Powinieneś zobaczyć komunikat „Brak danych logowania" — to znaczy, że
+   strona działa (bez tokena w adresie nie ma czego przekazać).
+5. Ten sam adres, **ze slashem na końcu**, wpisz w dwóch miejscach:
+   - Twitch Developer Console → OAuth Redirect URLs,
+   - `EXPO_PUBLIC_AUTH_BRIDGE_URL` w `.env` i w sekretach GitHub Actions.
+
+Strona nie ma żadnych zewnętrznych zależności, nie zbiera danych i nie
+ustawia cookies — całość to jeden plik z inline CSS i JS.
 
 Authorization Code odpada, bo Twitch wymaga przy wymianie kodu `client_secret`
 (samo PKCE nie wystarcza — `code_verifier` jest ignorowany), a sekret nie może
@@ -71,10 +125,13 @@ Uzupełnij:
 
 ```dotenv
 EXPO_PUBLIC_TWITCH_CLIENT_ID=twoj_client_id
+EXPO_PUBLIC_AUTH_BRIDGE_URL=https://TWOJ-LOGIN.github.io/twitchvod-auth/
 ```
 
-Redirect URI **nie jest** zmienną środowiskową — to stała `twitchvod://auth`
-w `src/auth/config.ts` (uzasadnienie w sekcji 2).
+Adres powrotu do aplikacji (`twitchvod://auth`) **nie jest** konfigurowalny —
+to stała `APP_CALLBACK_URL` w `src/auth/config.ts`. Sideloadly nadpisuje
+`CFBundleIdentifier`, ale `CFBundleURLSchemes` zostawia w spokoju, więc
+schemat powrotu nie może być pochodną bundle ID.
 
 Zmienne `EXPO_PUBLIC_*` są wkompilowane w bundle na etapie builda — po ich
 zmianie trzeba przebudować aplikację, restart nie wystarczy. `.env` jest
@@ -87,8 +144,9 @@ secret*:
 | Nazwa | Wartość |
 |---|---|
 | `EXPO_PUBLIC_TWITCH_CLIENT_ID` | Twój Client ID z konsoli Twitcha |
+| `EXPO_PUBLIC_AUTH_BRIDGE_URL` | `https://TWOJ-LOGIN.github.io/twitchvod-auth/` |
 
-Bez tego sekretu IPA zbuduje się poprawnie, ale ekran logowania pokaże
+Bez tych sekretów IPA zbuduje się poprawnie, ale ekran logowania pokaże
 „Brakuje konfiguracji" i przycisk będzie nieaktywny.
 
 ## 4. Budowanie IPA w GitHub Actions
@@ -167,7 +225,8 @@ natywne albo zmienne `EXPO_PUBLIC_*`.
 
 - `ios.bundleIdentifier: "pl.easywebstart.twitchvod"`,
 - `scheme: "twitchvod"` → `CFBundleURLSchemes: ["twitchvod", "pl.easywebstart.twitchvod"]`
-  — kod używa wyłącznie pierwszego,
+  — kod używa wyłącznie pierwszego; to na niego strona-pomost przekierowuje
+  po logowaniu,
 - `ios.infoPlist.UIBackgroundModes: ["audio"]` — odtwarzanie w tle,
 - plugin `expo-video` z `supportsBackgroundPlayback` i `supportsPictureInPicture`,
 - `ios.supportsTablet: true` oraz `UIRequiresFullScreen: false` — Split View
@@ -236,9 +295,9 @@ app/                      trasy expo-router
 
 src/
   auth/
-    config.ts             client id, redirect, zakresy, walidacja configu
+    config.ts             client id, AUTH_BRIDGE_URL, APP_CALLBACK_URL, walidacja
     tokenStore.ts         zapis sesji w SecureStore
-    twitchAuth.ts         implicit grant: signIn / revoke / validate
+    twitchAuth.ts         implicit grant przez pomost: signIn / revoke / validate
     authManager.ts        stan sesji, czyszczenie po 401
     AuthContext.tsx       React-owa nakładka na authManager
   api/
@@ -282,9 +341,20 @@ obejścia.
 podpis. Odśwież przez Sideloadly (sekcja 5). Drugi możliwy powód: nie
 zatwierdzono profilu w *Ustawienia → Ogólne → VPN i zarządzanie urządzeniem*.
 
-**„Redirect URI mismatch"** — w konsoli Twitcha musi być wpisane dokładnie
-`twitchvod://auth`, bez końcowego ukośnika. Ta wartość jest stałą w kodzie
-(`src/auth/config.ts`), więc nie da się jej rozjechać przez `.env`.
+**„Redirect URI mismatch"** — `EXPO_PUBLIC_AUTH_BRIDGE_URL` musi być znak
+w znak tym samym adresem, co wpis w Twitch Developer Console, **ze slashem na
+końcu**. Aplikacja sprawdza to przy starcie i wypisuje problem na ekranie
+logowania, jeśli adres nie jest HTTPS albo nie kończy się ukośnikiem.
+
+**Po zalogowaniu Safari zostaje na stronie-pomoście** — automatyczne przejście
+na `twitchvod://` zostało zablokowane. Kliknij przycisk **Otwórz aplikację**;
+strona zostawia go na ekranie właśnie na taki wypadek.
+
+**Strona-pomost pokazuje „Brak danych logowania"** — otwarto ją bezpośrednio,
+bez tokena w adresie. To normalne i tak wygląda poprawnie działający deploy.
+
+**„Niezgodny parametr state"** — odpowiedź nie pasuje do żądania logowania
+(np. otwarty stary link z historii). Zaloguj się jeszcze raz od nowa.
 
 **Ekran logowania pokazuje „Brakuje konfiguracji"** — w buildzie zabrakło
 `EXPO_PUBLIC_TWITCH_CLIENT_ID`. Sprawdź, czy sekret jest ustawiony
