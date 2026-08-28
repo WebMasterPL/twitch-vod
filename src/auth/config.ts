@@ -14,16 +14,28 @@ import Constants from 'expo-constants';
  * Twitcha, albo oknem logowania, ktore nigdy sie nie zamyka.
  */
 
+/**
+ * Obcinamy biale znaki przy kazdym odczycie.
+ *
+ * Sekrety GitHub Actions zachowuja wartosc doslownie - `echo x | gh secret set`
+ * albo skopiowanie identyfikatora razem z koncem linii zostawia na koncu "\n".
+ * Taki client_id trafia do URL-a jako "...%0A" i Twitch odrzuca go z
+ * komunikatem "invalid client", bez zadnej wskazowki, gdzie szukac przyczyny.
+ */
+function clean(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function env(name: string): string | undefined {
-  const value = process.env[name];
-  return value && value.length > 0 ? value : undefined;
+  return clean(process.env[name]);
 }
 
 function extra(name: string): string | undefined {
-  const value = (Constants.expoConfig?.extra as Record<string, unknown> | undefined)?.[
-    name
-  ];
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
+  return clean(
+    (Constants.expoConfig?.extra as Record<string, unknown> | undefined)?.[name]
+  );
 }
 
 export const TWITCH_CLIENT_ID =
