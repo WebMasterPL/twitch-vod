@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -11,10 +11,11 @@ import {
   View,
 } from 'react-native';
 
-import { searchChannels } from '../../src/api/helix';
+import { getStreamsByUserIds, searchChannels } from '../../src/api/helix';
 import type { ChannelSearchResult } from '../../src/api/types';
 import { EmptyState, ErrorState } from '../../src/components/StateViews';
 import { ChannelRow } from '../../src/components/ChannelRow';
+import { useAsync } from '../../src/hooks/useAsync';
 import { usePaginated } from '../../src/hooks/usePaginated';
 import { colors, radius, spacing } from '../../src/theme';
 
@@ -37,6 +38,25 @@ export default function SearchScreen() {
     [query],
     query.length > 0
   );
+
+  // /search/channels nie zwraca liczby widzow - dobieramy ja z /streams
+  // dla tych wynikow, ktore sa akurat na zywo.
+  const liveIds = useMemo(
+    () => results.items.filter((item) => item.isLive).map((item) => item.id),
+    [results.items]
+  );
+
+  const liveStreams = useAsync(
+    (signal) => getStreamsByUserIds(liveIds, signal),
+    [liveIds.join(',')],
+    liveIds.length > 0
+  );
+
+  const viewersById = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const stream of liveStreams.data ?? []) map.set(stream.userId, stream.viewerCount);
+    return map;
+  }, [liveStreams.data]);
 
   const openChannel = useCallback(
     (channel: ChannelSearchResult) => {
@@ -97,7 +117,7 @@ export default function SearchScreen() {
                   ? {
                       title: item.gameName || 'Na żywo',
                       gameName: item.gameName,
-                      viewerCount: 0,
+                      viewerCount: viewersById.get(item.id),
                       startedAt: item.startedAt,
                     }
                   : undefined

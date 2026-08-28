@@ -12,7 +12,8 @@ type Props = {
   live?: {
     title: string;
     gameName: string;
-    viewerCount: number;
+    /** Brak = jeszcze nieznana; wtedy pomijamy ten segment zamiast pokazywac 0. */
+    viewerCount?: number;
     startedAt: string;
   };
   subtitle?: string;
@@ -65,7 +66,9 @@ export function ChannelRow({
             <Text style={styles.meta} numberOfLines={1}>
               {[
                 live.gameName,
-                `${formatViewers(live.viewerCount)} widzów`,
+                live.viewerCount === undefined
+                  ? null
+                  : `${formatViewers(live.viewerCount)} widzów`,
                 formatUptime(live.startedAt),
               ]
                 .filter(Boolean)

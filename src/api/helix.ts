@@ -86,6 +86,24 @@ export function getFollowedStreams(
   );
 }
 
+/**
+ * Transmisje wskazanych uzytkownikow. /search/channels zwraca is_live, ale nie
+ * liczbe widzow - trzeba ja dobrac osobno.
+ */
+export async function getStreamsByUserIds(
+  userIds: string[],
+  signal?: AbortSignal
+): Promise<LiveStream[]> {
+  if (userIds.length === 0) return [];
+  // Helix przyjmuje max 100 identyfikatorow na zapytanie.
+  const body = await helixGet<{ data: RawStream[] }>(
+    '/streams',
+    { user_id: userIds.slice(0, 100), first: 100 },
+    signal
+  );
+  return (body.data ?? []).map(mapStream);
+}
+
 type RawSearchChannel = {
   id: string;
   broadcaster_login: string;
