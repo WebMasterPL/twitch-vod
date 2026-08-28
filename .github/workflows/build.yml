@@ -52,11 +52,21 @@ jobs:
       - name: Build (Release, bez podpisu)
         run: |
           WORKSPACE=$(ls -d ios/*.xcworkspace | head -n 1)
-          # Pierwszy schemat z listy to schemat aplikacji; nazwa zalezy od
-          # "name" w app.config.js, wiec czytamy ja zamiast wpisywac na sztywno.
-          SCHEME=$(xcodebuild -list -json -workspace "$WORKSPACE" \
-            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{console.log(JSON.parse(s).workspace.schemes[0])})")
+
+          # Schemat aplikacji nazywa sie tak samo jak workspace wygenerowany
+          # przez expo prebuild. NIE brac schemes[0] - lista z -list -json jest
+          # alfabetyczna i zaczyna sie od schematow Podow (EXApplication,
+          # EXConstants...), przez co build "przechodzi", ale nie produkuje
+          # .app aplikacji i krok pakujacy nie ma czego spakowac.
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
           echo "Buduje schemat: $SCHEME"
+
+          if ! xcodebuild -list -json -workspace "$WORKSPACE" \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{process.exit(JSON.parse(s).workspace.schemes.includes(process.argv[1])?0:1)})" "$SCHEME"; then
+            echo "BLAD: schemat '$SCHEME' nie istnieje w workspace. Dostepne:"
+            xcodebuild -list -workspace "$WORKSPACE"
+            exit 1
+          fi
 
           xcodebuild \
             -workspace "$WORKSPACE" \
