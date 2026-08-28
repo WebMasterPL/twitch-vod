@@ -37,5 +37,10 @@ yarn-error.*
 *.tsbuildinfo
 
 # generated native folders
-/ios
+# ios/ jest w repo - buduje go GitHub Actions. Ignorujemy tylko artefakty.
+ios/Pods/
+ios/build/
 /android
+
+.env
+.env.local

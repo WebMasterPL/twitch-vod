@@ -1,0 +1,93 @@
+name: Build unsigned iOS IPA
+
+# Uruchamiane recznie: Actions -> "Build unsigned iOS IPA" -> Run workflow.
+# Wynikiem jest NIEPODPISANY app.ipa. Podpis dokłada Sideloadly na Windowsie.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    env:
+      # Wkompilowane w bundle podczas `expo export:embed` w fazie buildu Xcode.
+      # Ustaw w Settings -> Secrets and variables -> Actions.
+      EXPO_PUBLIC_TWITCH_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_TWITCH_CLIENT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prebuild (tylko gdy ios/ nie ma w repo)
+        run: |
+          if [ -d ios ]; then
+            echo "Folder ios/ jest w repo - pomijam prebuild."
+          else
+            echo "Brak ios/ - generuje projekt natywny."
+            npx expo prebuild -p ios --no-install
+          fi
+
+      - name: pod install
+        run: |
+          cd ios
+          pod install
+
+      - name: Lista schematow Xcode
+        run: |
+          WORKSPACE=$(ls -d ios/*.xcworkspace | head -n 1)
+          echo "Workspace: $WORKSPACE"
+          xcodebuild -list -workspace "$WORKSPACE"
+
+      - name: Build (Release, bez podpisu)
+        run: |
+          WORKSPACE=$(ls -d ios/*.xcworkspace | head -n 1)
+          # Pierwszy schemat z listy to schemat aplikacji; nazwa zalezy od
+          # "name" w app.config.js, wiec czytamy ja zamiast wpisywac na sztywno.
+          SCHEME=$(xcodebuild -list -json -workspace "$WORKSPACE" \
+            | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{console.log(JSON.parse(s).workspace.schemes[0])})")
+          echo "Buduje schemat: $SCHEME"
+
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            EXPANDED_CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Spakuj .app do app.ipa
+        run: |
+          PRODUCTS=build/Build/Products/Release-iphoneos
+          APP=$(ls -d "$PRODUCTS"/*.app | head -n 1)
+          echo "Pakuje: $APP"
+
+          mkdir -p payload-root/Payload
+          cp -R "$APP" payload-root/Payload/
+          cd payload-root
+          zip -qry ../app.ipa Payload
+          cd ..
+          ls -lh app.ipa
+
+      - name: Upload artefaktu
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-unsigned-ipa
+          path: app.ipa
+          retention-days: 14
+          if-no-files-found: error
