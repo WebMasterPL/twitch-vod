@@ -9,15 +9,13 @@ import { colors, radius, spacing } from '../theme';
 
 type Props = {
   vod: Vod;
-  /** Sekundy obejrzane wczesniej - rysujemy pasek postepu. */
-  resumeSeconds?: number;
   onPress: () => void;
 };
 
-export function VodCard({ vod, resumeSeconds = 0, onPress }: Props) {
+// Pasek postepu wrocil by tu, gdyby odtwarzacz zaczal zapisywac pozycje.
+// Warstwa danych czeka gotowa w src/lib/playbackPositions.ts.
+export function VodCard({ vod, onPress }: Props) {
   const thumbnail = sizeThumbnail(vod.thumbnailUrl, 320, 180);
-  const progress =
-    vod.durationSeconds > 0 ? Math.min(resumeSeconds / vod.durationSeconds, 1) : 0;
 
   return (
     <Pressable
@@ -36,11 +34,6 @@ export function VodCard({ vod, resumeSeconds = 0, onPress }: Props) {
         <View style={styles.durationBadge}>
           <Text style={styles.durationText}>{formatDuration(vod.durationSeconds)}</Text>
         </View>
-        {progress > 0 ? (
-          <View style={styles.progressTrack}>
-            <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
-          </View>
-        ) : null}
       </View>
 
       <View style={styles.body}>
@@ -83,15 +76,6 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   durationText: { color: '#FFFFFF', fontSize: 11, fontWeight: '600' },
-  progressTrack: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: 3,
-    backgroundColor: 'rgba(255,255,255,0.25)',
-  },
-  progressFill: { height: '100%', backgroundColor: colors.accent },
   body: { flex: 1, gap: spacing.xs, justifyContent: 'center' },
   title: { color: colors.text, fontSize: 15, fontWeight: '600' },
   meta: { color: colors.textMuted, fontSize: 12 },

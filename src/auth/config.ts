@@ -65,6 +65,24 @@ export const APP_CALLBACK_URL = 'twitchvod://auth';
 export const AUTH_BRIDGE_URL =
   extra('authBridgeUrl') ?? env('EXPO_PUBLIC_AUTH_BRIDGE_URL') ?? '';
 
+/**
+ * Strona-wrapper odtwarzacza, lezaca obok pomostu auth w tym samym repo
+ * GitHub Pages. Wyprowadzamy ja z AUTH_BRIDGE_URL zamiast dodawac osobna
+ * zmienna srodowiskowa - jeden adres do skonfigurowania, jeden sekret w CI.
+ *
+ * AUTH_BRIDGE_URL jest walidowany na koncowy ukosnik, wiec doklejenie
+ * nazwy pliku jest bezpieczne. Pusty, gdy bridge nie jest skonfigurowany.
+ */
+export const PLAYER_WRAPPER_URL = AUTH_BRIDGE_URL
+  ? `${AUTH_BRIDGE_URL}player.html`
+  : '';
+
+/** Adres wrappera dla konkretnego VOD-a. */
+export function playerUrlForVod(vodId: string): string {
+  if (!PLAYER_WRAPPER_URL) return '';
+  return `${PLAYER_WRAPPER_URL}?v=${encodeURIComponent(vodId)}`;
+}
+
 export const SCOPES = ['user:read:follows'];
 
 export const TWITCH_ENDPOINTS = {

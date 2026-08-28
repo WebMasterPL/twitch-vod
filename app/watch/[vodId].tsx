@@ -1,19 +1,31 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
-import React from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { WebView } from 'react-native-webview';
 
 import { getVideoById } from '../../src/api/helix';
+import { playerUrlForVod } from '../../src/auth/config';
 import { ErrorState, LoadingState } from '../../src/components/StateViews';
 import { useAsync } from '../../src/hooks/useAsync';
-import { formatDate, formatDuration } from '../../src/lib/format';
+import { formatDate, formatDuration, formatViewers } from '../../src/lib/format';
 import { colors, radius, spacing } from '../../src/theme';
 
 /**
- * Zaslepka odtwarzacza. Warstwa playbacku (GQL PlaybackAccessToken -> usher -> expo-video)
- * powstaje w kolejnym kroku; ten ekran potwierdza, ze nawigacja i dane VOD-a dzialaja.
+ * Odtwarzacz oparty na oficjalnym embedzie Twitcha w WKWebView.
+ *
+ * gql.twitch.tv odrzuca nasz Client-Id, wiec playback access token jest poza
+ * zasiegiem i usher odpada. Embed jest jedyna droga, ktora nie wymaga
+ * podszywania sie pod klienta webowego Twitcha.
+ *
+ * Sesja Twitcha w tym WebView jest odrebna od Safari - iOS izoluje
+ * WKWebsiteDataStore per aplikacja. Uzytkownik loguje sie tu raz, a sesja
+ * zostaje w magazynie aplikacji. VOD-y sub-only dziala wylacznie dzieki
+ * uprawnieniom tego konta; nic tego nie omija.
  */
 export default function WatchScreen() {
   const { vodId } = useLocalSearchParams<{ vodId: string }>();
+  const [playerLoading, setPlayerLoading] = useState(true);
+  const [playerFailed, setPlayerFailed] = useState(false);
 
   const vod = useAsync((signal) => getVideoById(vodId, signal), [vodId], Boolean(vodId));
 
@@ -22,25 +34,75 @@ export default function WatchScreen() {
   if (!vod.data) return <ErrorState error={new Error('Nie znaleziono VOD-a')} />;
 
   const video = vod.data;
+  const playerUrl = playerUrlForVod(video.id);
 
   return (
     <>
       <Stack.Screen options={{ title: video.userName }} />
-      <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-        <View style={styles.placeholder}>
-          <Text style={styles.placeholderTitle}>Odtwarzacz w budowie</Text>
-          <Text style={styles.placeholderHint}>
-            Kolejny krok: playback access token, HLS z usher.ttvnw.net i expo-video.
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={styles.content}
+        // Gesty odtwarzacza nie moga konkurowac z przewijaniem ekranu.
+        scrollEnabled={!playerLoading}
+      >
+        <View style={styles.header}>
+          <Text style={styles.title} numberOfLines={3}>
+            {video.title || 'Bez tytułu'}
+          </Text>
+          <Text style={styles.meta} numberOfLines={1}>
+            {[
+              video.userName,
+              formatDate(video.publishedAt || video.createdAt),
+              formatDuration(video.durationSeconds),
+              `${formatViewers(video.viewCount)} wyświetleń`,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           </Text>
         </View>
 
-        <Text style={styles.title}>{video.title || 'Bez tytułu'}</Text>
-        <Text style={styles.meta}>
-          {`${formatDate(video.publishedAt || video.createdAt)} · ${formatDuration(
-            video.durationSeconds
-          )}`}
-        </Text>
-        <Text style={styles.meta}>ID: {video.id}</Text>
+        <View style={styles.playerBox}>
+          {playerUrl && !playerFailed ? (
+            <>
+              <WebView
+                source={{ uri: playerUrl }}
+                style={styles.player}
+                // Bez tego iOS przejmuje ekran natywnym odtwarzaczem od razu
+                // po starcie, zamiast grac w ramce.
+                allowsInlineMediaPlayback
+                allowsAirPlayForMediaPlayback
+                allowsPictureInPictureMediaPlayback
+                mediaPlaybackRequiresUserAction={false}
+                allowsFullscreenVideo
+                javaScriptEnabled
+                domStorageEnabled
+                onLoadEnd={() => setPlayerLoading(false)}
+                onError={() => {
+                  setPlayerLoading(false);
+                  setPlayerFailed(true);
+                }}
+                onHttpError={() => {
+                  setPlayerLoading(false);
+                  setPlayerFailed(true);
+                }}
+              />
+              {playerLoading ? (
+                <View style={styles.playerOverlay} pointerEvents="none">
+                  <ActivityIndicator color={colors.accent} />
+                </View>
+              ) : null}
+            </>
+          ) : (
+            <View style={styles.playerOverlay}>
+              <Text style={styles.playerFallback}>
+                {playerUrl
+                  ? 'Nie udało się wczytać odtwarzacza.'
+                  : 'Brak adresu odtwarzacza — sprawdź konfigurację.'}
+              </Text>
+            </View>
+          )}
+        </View>
+
         {video.description ? (
           <Text style={styles.description}>{video.description}</Text>
         ) : null}
@@ -51,22 +113,30 @@ export default function WatchScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
-  content: { padding: spacing.lg, gap: spacing.sm },
-  placeholder: {
-    aspectRatio: 16 / 9,
-    borderRadius: radius.md,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-  },
-  placeholderTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
-  placeholderHint: { color: colors.textMuted, fontSize: 13, textAlign: 'center' },
+  content: { padding: spacing.lg, gap: spacing.md },
+  header: { gap: spacing.xs },
   title: { color: colors.text, fontSize: 18, fontWeight: '700' },
   meta: { color: colors.textMuted, fontSize: 13 },
-  description: { color: colors.text, fontSize: 14, marginTop: spacing.md, lineHeight: 20 },
+  playerBox: {
+    width: '100%',
+    aspectRatio: 16 / 9,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    backgroundColor: '#000000',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  player: { flex: 1, backgroundColor: '#000000' },
+  playerOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  playerFallback: { color: colors.textMuted, fontSize: 14, textAlign: 'center' },
+  description: { color: colors.text, fontSize: 14, lineHeight: 20 },
 });

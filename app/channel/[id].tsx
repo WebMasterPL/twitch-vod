@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback } from 'react';
 import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { getChannelVods } from '../../src/api/helix';
@@ -7,7 +7,6 @@ import type { Vod } from '../../src/api/types';
 import { EmptyState, ErrorState, LoadingState } from '../../src/components/StateViews';
 import { VodCard } from '../../src/components/VodCard';
 import { usePaginated } from '../../src/hooks/usePaginated';
-import { getPositions } from '../../src/lib/playbackPositions';
 import { colors, spacing } from '../../src/theme';
 
 export default function ChannelVodsScreen() {
@@ -23,28 +22,6 @@ export default function ChannelVodsScreen() {
     [id],
     Boolean(id)
   );
-
-  const [resume, setResume] = useState<Record<string, number>>({});
-
-  // Zapisane pozycje odtwarzania - rysujemy z nich pasek postepu na kaflach.
-  useEffect(() => {
-    let cancelled = false;
-    const ids = vods.items.map((vod) => vod.id);
-    if (ids.length === 0) return;
-
-    void getPositions(ids).then((map) => {
-      if (cancelled) return;
-      const next: Record<string, number> = {};
-      for (const [vodId, entry] of Object.entries(map)) {
-        next[vodId] = entry.positionSeconds;
-      }
-      setResume(next);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [vods.items]);
 
   const openVod = useCallback(
     (vod: Vod) => {
@@ -85,7 +62,7 @@ export default function ChannelVodsScreen() {
           vods.items.length === 0 && styles.emptyContainer,
         ]}
         renderItem={({ item }) => (
-          <VodCard vod={item} resumeSeconds={resume[item.id]} onPress={() => openVod(item)} />
+          <VodCard vod={item} onPress={() => openVod(item)} />
         )}
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         ListEmptyComponent={
