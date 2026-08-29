@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppMark } from '../src/components/AppMark';
 import { useAuth } from '../src/auth/AuthContext';
 import { APP_CALLBACK_URL, AUTH_BRIDGE_URL, configProblems } from '../src/auth/config';
 import { AuthCancelled } from '../src/auth/twitchAuth';
@@ -38,7 +39,9 @@ export default function LoginScreen() {
         { paddingTop: insets.top + spacing.xxl, paddingBottom: insets.bottom + spacing.xl },
       ]}
     >
-      <Text style={styles.logo}>Twitch VOD</Text>
+      <View style={styles.logoRow}>
+        <AppMark size={76} showWordmark />
+      </View>
       <Text style={styles.subtitle}>
         Odtwarzacz archiwalnych transmisji z Twoich śledzonych kanałów.
       </Text>
@@ -91,7 +94,7 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
   content: { paddingHorizontal: spacing.xl, gap: spacing.lg, flexGrow: 1, justifyContent: 'center' },
-  logo: { color: colors.text, fontSize: 34, fontWeight: '800', textAlign: 'center' },
+  logoRow: { alignItems: 'center' },
   subtitle: {
     color: colors.textMuted,
     fontSize: 15,
