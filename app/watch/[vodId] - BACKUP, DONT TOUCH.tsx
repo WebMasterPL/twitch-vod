@@ -1,13 +1,6 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 import { getVideoById } from '../../src/api/helix';
@@ -15,7 +8,6 @@ import { playerUrlForVod } from '../../src/auth/config';
 import { ErrorState, LoadingState } from '../../src/components/StateViews';
 import { useAsync } from '../../src/hooks/useAsync';
 import { formatDate, formatDuration, formatViewers } from '../../src/lib/format';
-import { markLoginHintSeen, shouldShowLoginHint } from '../../src/lib/playerHints';
 import { colors, radius, spacing } from '../../src/theme';
 
 /**
@@ -98,25 +90,6 @@ export default function WatchScreen() {
   const { vodId } = useLocalSearchParams<{ vodId: string }>();
   const [playerLoading, setPlayerLoading] = useState(true);
   const [playerFailed, setPlayerFailed] = useState(false);
-  const [showLoginHint, setShowLoginHint] = useState(false);
-
-  // Podpowiedz o logowaniu w oknie odtwarzacza - raz, przy pierwszym wejsciu.
-  // Nie wykrywamy stanu sesji: embed Twitcha nie raportuje ani zalogowania,
-  // ani odmowy z powodu subskrypcji.
-  useEffect(() => {
-    let cancelled = false;
-    void shouldShowLoginHint().then((show) => {
-      if (!cancelled) setShowLoginHint(show);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  function dismissLoginHint() {
-    setShowLoginHint(false);
-    void markLoginHintSeen();
-  }
 
   const vod = useAsync((signal) => getVideoById(vodId, signal), [vodId], Boolean(vodId));
 
@@ -198,23 +171,6 @@ export default function WatchScreen() {
           )}
         </View>
 
-        {showLoginHint ? (
-          <View style={styles.hint}>
-            <Text style={styles.hintText}>
-              Odtwarzacz ma własną sesję Twitcha, niezależną od Safari. Jeśli VOD
-              wymaga subskrypcji, zaloguj się na Twitcha w oknie odtwarzacza — wystarczy raz.
-            </Text>
-            <Pressable
-              onPress={dismissLoginHint}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Ukryj podpowiedź"
-            >
-              <Text style={styles.hintDismiss}>Rozumiem</Text>
-            </Pressable>
-          </View>
-        ) : null}
-
         {video.description ? (
           <Text style={styles.description}>{video.description}</Text>
         ) : null}
@@ -250,20 +206,5 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   playerFallback: { color: colors.textMuted, fontSize: 14, textAlign: 'center' },
-  hint: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: spacing.md,
-    gap: spacing.sm,
-  },
-  hintText: { color: colors.textMuted, fontSize: 13, lineHeight: 18 },
-  hintDismiss: {
-    color: colors.accent,
-    fontSize: 14,
-    fontWeight: '600',
-    alignSelf: 'flex-end',
-  },
   description: { color: colors.text, fontSize: 14, lineHeight: 20 },
 });

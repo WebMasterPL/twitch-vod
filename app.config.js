@@ -29,6 +29,10 @@ module.exports = () => ({
         usesNonExemptEncryption: false,
       },
       infoPlist: {
+        // ZOSTAJE mimo usuniecia expo-video. Apple wymaga trybu "Audio, AirPlay
+        // and Picture in Picture" do dzialania PiP - takze dla mediow z WKWebView.
+        // Usuniecie tego klucza najpewniej zabije PiP i odtwarzanie w tle,
+        // ktore sa potwierdzone jako dzialajace na urzadzeniu.
         UIBackgroundModes: ['audio'],
         UISupportsDocumentBrowser: false,
         UIRequiresFullScreen: false,
@@ -60,13 +64,6 @@ module.exports = () => ({
       ],
       'expo-secure-store',
       'expo-web-browser',
-      [
-        'expo-video',
-        {
-          supportsBackgroundPlayback: true,
-          supportsPictureInPicture: true,
-        },
-      ],
       'expo-font',
       // Wylacza podpisywanie Podow - podpis dokłada Sideloadly.
       './plugins/withUnsignedPods',
