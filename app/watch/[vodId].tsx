@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -11,7 +11,6 @@ import {
 import { WebView } from 'react-native-webview';
 
 import { getVideoById } from '../../src/api/helix';
-import { playerUrlForVod } from '../../src/auth/config';
 import { ErrorState, LoadingState } from '../../src/components/StateViews';
 import { useAsync } from '../../src/hooks/useAsync';
 import { formatDate, formatDuration, formatViewers } from '../../src/lib/format';
@@ -19,80 +18,37 @@ import { markLoginHintSeen, shouldShowLoginHint } from '../../src/lib/playerHint
 import { colors, radius, spacing } from '../../src/theme';
 
 /**
- * Skrypt JS wstrzykiwany przed załadowaniem strony Twitcha.
- * Działa na zasadzie podmiany Client-ID oraz ukrywania elementów DOM oznaczonych jako "sub-only".
+ * Twitch wymaga, aby parametr `parent` odpowiadał domenie, z której
+ * osadzany jest odtwarzacz. W React Native nie ma prawdziwego origin,
+ * więc ustawiamy własny `baseUrl` w WebView i tę samą domenę podajemy
+ * jako `parent`. Zmień na domenę, którą kontrolujesz.
  */
-const TWITCHNOSUB_SCRIPT = `
-(function() {
-  console.log('[TwitchNoSub] Inicjalizacja...');
+const EMBED_DOMAIN = 'twitch.tv';
+const EMBED_BASE_URL = `https://${EMBED_DOMAIN}`;
 
-  // --- 1. PODMIANA CLIENT-ID ---
-  // Zapisujemy oryginalną metodę XMLHttpRequest
-  const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
-  
-  XMLHttpRequest.prototype.setRequestHeader = function(key, value) {
-    // Jeśli nagłówek to Client-ID, podmieniamy go na publiczny
-    if (key.toLowerCase() === 'client-id') {
-      // To ID pozwala na odtwarzanie VOD-ów bez konieczności bycia subskrybentem 
-      // (z pewnymi ograniczeniami, np. brak niektórych funkcji społecznościowych).
-      value = 'kimne79xkrwz66ojhe3v0t249i3m9'; 
-      console.log('[TwitchNoSub] Client-ID zmieniony na publiczny.');
-    }
-    return originalSetRequestHeader.apply(this, arguments);
-  };
+function buildPlayerHtml(videoId: string): string {
+  const src =
+    `https://player.twitch.tv/?video=${encodeURIComponent(videoId)}` +
+    `&parent=${EMBED_DOMAIN}&autoplay=true&muted=false`;
 
-  // --- 2. CSS: UKRYWANIE ELEMENTÓW SUB-ONLY ---
-  // Dodajemy styl, który wymusza display: none na elementach z danymi sub-only
-  const style = document.createElement('style');
-  style.innerHTML = \`
-    /* Ukryj kontenery VOD/Clips oznaczone jako sub-only */
-    .vod-card__sub-only,
-    .clip-card__sub-only,
-    .stream-card__sub-only,
-    [data-sub-only="true"],
-    [data-audio-only="true"],
-    .video-player__sub-only-overlay {
-      display: none !important;
-    }
-    
-    /* Ukryj przycisk "Sub Required" */
-    .sub-required-button {
-      display: none !important;
-    }
-  \`;
-  document.head.appendChild(style);
-
-  // --- 3. MUTATION OBSERVER ---
-  // Obserwator, który ukrywa nowe elementy sub-only dodane dynamicznie (lazy loading)
-  const observer = new MutationObserver((mutations) => {
-    mutations.forEach((mutation) => {
-      mutation.addedNodes.forEach((node) => {
-        if (node.nodeType === 1) { // Element DOM
-          // Sprawdź sam element
-          if (node.dataset.subOnly === 'true' || 
-              node.dataset.audioOnly === 'true' ||
-              node.classList.contains('sub-only')) {
-            node.style.display = 'none';
-          }
-          
-          // Sprawdź dzieci (jeśli dodany node zawiera ukrywalne elementy)
-          const subOnlyElements = node.querySelectorAll('[data-sub-only="true"], [data-audio-only="true"], .sub-only');
-          subOnlyElements.forEach(el => el.style.display = 'none');
-        }
-      });
-    });
-  });
-
-  // Zacznij obserwować body
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
-
-  console.log('[TwitchNoSub] Gotowe.');
-})();
-true; 
-`;
+  return `<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <style>
+      html, body { margin: 0; padding: 0; background: #000; height: 100%; }
+      iframe { border: 0; width: 100%; height: 100%; display: block; }
+    </style>
+  </head>
+  <body>
+    <iframe
+      src="${src}"
+      allowfullscreen
+      allow="autoplay; fullscreen; picture-in-picture"
+    ></iframe>
+  </body>
+</html>`;
+}
 
 export default function WatchScreen() {
   const { vodId } = useLocalSearchParams<{ vodId: string }>();
@@ -100,9 +56,6 @@ export default function WatchScreen() {
   const [playerFailed, setPlayerFailed] = useState(false);
   const [showLoginHint, setShowLoginHint] = useState(false);
 
-  // Podpowiedz o logowaniu w oknie odtwarzacza - raz, przy pierwszym wejsciu.
-  // Nie wykrywamy stanu sesji: embed Twitcha nie raportuje ani zalogowania,
-  // ani odmowy z powodu subskrypcji.
   useEffect(() => {
     let cancelled = false;
     void shouldShowLoginHint().then((show) => {
@@ -120,12 +73,25 @@ export default function WatchScreen() {
 
   const vod = useAsync((signal) => getVideoById(vodId, signal), [vodId], Boolean(vodId));
 
+  const video = vod.data;
+
+  const playerHtml = useMemo(
+    () => (video ? buildPlayerHtml(video.id) : null),
+    [video],
+  );
+
   if (vod.loading) return <LoadingState label="Wczytuję VOD…" />;
   if (vod.error) return <ErrorState error={vod.error} onRetry={vod.reload} />;
-  if (!vod.data) return <ErrorState error={new Error('Nie znaleziono VOD-a')} />;
+  if (!video) return <ErrorState error={new Error('Nie znaleziono VOD-a')} />;
 
-  const video = vod.data;
-  const playerUrl = playerUrlForVod(video.id);
+  const metaLine = [
+    video.userName,
+    formatDate(video.publishedAt || video.createdAt),
+    formatDuration(video.durationSeconds),
+    `${formatViewers(video.viewCount)} wyświetleń`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 
   return (
     <>
@@ -133,7 +99,6 @@ export default function WatchScreen() {
       <ScrollView
         style={styles.screen}
         contentContainerStyle={styles.content}
-        // Gesty odtwarzacza nie mogą konkurować z przewijaniem ekranu.
         scrollEnabled={!playerLoading}
       >
         <View style={styles.header}>
@@ -141,25 +106,17 @@ export default function WatchScreen() {
             {video.title || 'Bez tytułu'}
           </Text>
           <Text style={styles.meta} numberOfLines={1}>
-            {[
-              video.userName,
-              formatDate(video.publishedAt || video.createdAt),
-              formatDuration(video.durationSeconds),
-              `${formatViewers(video.viewCount)} wyświetleń`,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
+            {metaLine}
           </Text>
         </View>
 
         <View style={styles.playerBox}>
-          {playerUrl && !playerFailed ? (
+          {playerHtml && !playerFailed ? (
             <>
               <WebView
-                source={{ uri: playerUrl }}
+                source={{ html: playerHtml, baseUrl: EMBED_BASE_URL }}
                 style={styles.player}
-                // Bez tego iOS przejmuje ekran natywnym odtwarzaczem od razu
-                // po starcie, zamiast grać w ramce.
+                originWhitelist={['*']}
                 allowsInlineMediaPlayback
                 allowsAirPlayForMediaPlayback
                 allowsPictureInPictureMediaPlayback
@@ -167,10 +124,6 @@ export default function WatchScreen() {
                 allowsFullscreenVideo
                 javaScriptEnabled
                 domStorageEnabled
-                
-                // <-- KLUCZOWA ZMIANA: WSTRZYKIWANIE SKRYPTU TWITCHNOSUB
-                injectedJavaScriptBeforeContentLoaded={TWITCHNOSUB_SCRIPT}
-                
                 onLoadEnd={() => setPlayerLoading(false)}
                 onError={() => {
                   setPlayerLoading(false);
@@ -190,7 +143,7 @@ export default function WatchScreen() {
           ) : (
             <View style={styles.playerOverlay}>
               <Text style={styles.playerFallback}>
-                {playerUrl
+                {playerHtml
                   ? 'Nie udało się wczytać odtwarzacza.'
                   : 'Brak adresu odtwarzacza — sprawdź konfigurację.'}
               </Text>
@@ -201,8 +154,8 @@ export default function WatchScreen() {
         {showLoginHint ? (
           <View style={styles.hint}>
             <Text style={styles.hintText}>
-              Odtwarzacz ma własną sesję Twitcha, niezależną od Safari. Jeśli VOD
-              wymaga subskrypcji, zaloguj się na Twitcha w oknie odtwarzacza — wystarczy raz.
+              Odtwarzacz ma własną sesję Twitcha. Jeśli VOD wymaga subskrypcji,
+              zaloguj się na Twitcha w oknie odtwarzacza — wystarczy raz.
             </Text>
             <Pressable
               onPress={dismissLoginHint}
