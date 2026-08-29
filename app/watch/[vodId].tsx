@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 
+// IMPORTY Z TWOJEGO PROJEKTU (zachowaj istniejące importy)
 import { getVideoById } from '../../src/api/helix';
 import { ErrorState, LoadingState } from '../../src/components/StateViews';
 import { useAsync } from '../../src/hooks/useAsync';
@@ -18,35 +19,121 @@ import { markLoginHintSeen, shouldShowLoginHint } from '../../src/lib/playerHint
 import { colors, radius, spacing } from '../../src/theme';
 
 /**
- * Twitch wymaga, aby parametr `parent` odpowiadał domenie, z której
- * osadzany jest odtwarzacz. W React Native nie ma prawdziwego origin,
- * więc ustawiamy własny `baseUrl` w WebView i tę samą domenę podajemy
- * jako `parent`. Zmień na domenę, którą kontrolujesz.
+ * GŁÓWNA LOGIKA TWITCHNOSUB
+ * 1. Dodaje style CSS do ukrywania nakładek.
+ * 2. Tworzy MutationObserver, który obserwuje ciało dokumentu.
+ * 3. Gdy nowy element pojawia się i ma klasę/atrubut sub-only -> usuwa go z DOM.
+ * 4. Uruchamia się od razu i po załadowaniu.
  */
-const EMBED_DOMAIN = 'twitch.tv';
-const EMBED_BASE_URL = `https://${EMBED_DOMAIN}`;
+const TWITCHNOSUB_INJECTED_SCRIPT = `
+(function() {
+  // 1. Dodaj style CSS
+  const style = document.createElement('style');
+  style.textContent = \`
+    /* Ukryj nakładki CSS */
+    .sub-gating-overlay,
+    .sub-gating-container,
+    .video-player__sub-only-overlay,
+    .player-controls__sub-only,
+    .vod-card__sub-only,
+    .stream-card__sub-only,
+    .video-player__sub-required,
+    .sub-required-button,
+    .player-controls__sub-button,
+    
+    /* Ukryj kontenery z danymi sub-only */
+    [data-sub-only="true"],
+    [data-audio-only="true"],
+    .sub-gated-content {
+      display: none !important;
+      visibility: hidden !important;
+      height: 0 !important;
+      overflow: hidden !important;
+      pointer-events: none !important;
+    }
+    
+    /* Usuń puste kontenery */
+    .sub-gating-container:empty {
+      display: none;
+    }
+  \`;
+  document.head.appendChild(style);
+
+  // 2. Funkcja rekurencyjnego usuwania
+  function hideSubContent() {
+    // Znajdź wszystkie elementy, które powinny być ukryte
+    const elements = document.querySelectorAll('[data-sub-only="true"], .sub-gating-overlay, .sub-gating-container, .video-player__sub-only-overlay');
+    
+    elements.forEach(el => {
+      // Sprawdź, czy element nie jest już ukryty
+      if (el.style.display !== 'none') {
+        el.style.display = 'none';
+        el.style.visibility = 'hidden';
+      }
+    });
+  }
+
+  // 3. MutationObserver - obserwuj dodawanie nowych elementów
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      mutation.addedNodes.forEach((node) => {
+        if (node.nodeType === 1) { // Element DOM
+          // Sprawdź, czy dodany węzeł ma atrybut sub-only
+          if (node.dataset && node.dataset.subOnly === 'true') {
+            node.style.display = 'none';
+          }
+          // Sprawdź dzieci węzła
+          const children = node.querySelectorAll('[data-sub-only="true"]');
+          children.forEach(child => child.style.display = 'none');
+        }
+      });
+    });
+    // Uruchom ukrywanie dla wszystkich nowych elementów
+    hideSubContent();
+  });
+
+  // Rozpocznij obserwację całego body
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  // 4. Pierwsze uruchomienie
+  hideSubContent();
+
+  // 5. Powtórzne skanowanie po 2 sekundach (na wypadek leniwego ładowania Twitcha)
+  setTimeout(() => {
+    hideSubContent();
+    // Wyślij sygnał do React Native
+    window.ReactNativeWebView.postMessage('TwitchNoSub Ready');
+  }, 2000);
+
+  true;
+})();
+`;
+
+const EMBED_DOMAIN = 'localhost'; 
 
 function buildPlayerHtml(videoId: string): string {
+  // Parent musi pasować do hosta, ale Twitch często ignoruje to dla wideo publicznych.
+  // Dla VOD sub-only, Twitch i tak wymaga logowania w WebView.
   const src =
     `https://player.twitch.tv/?video=${encodeURIComponent(videoId)}` +
-    `&parent=${EMBED_DOMAIN}&autoplay=true&muted=false`;
+    `&parent=${EMBED_DOMAIN}&autoplay=1&muted=1`;
 
   return `<!DOCTYPE html>
 <html>
-  <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <style>
-      html, body { margin: 0; padding: 0; background: #000; height: 100%; }
-      iframe { border: 0; width: 100%; height: 100%; display: block; }
-    </style>
-  </head>
-  <body>
-    <iframe
-      src="${src}"
-      allowfullscreen
-      allow="autoplay; fullscreen; picture-in-picture"
-    ></iframe>
-  </body>
+ <head>
+ <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+ <style>
+   html, body { margin: 0; padding: 0; background: #000; height: 100%; }
+   iframe { border: 0; width: 100%; height: 100%; display: block; }
+ </style>
+ </head>
+ <body>
+ <iframe
+   src="${src}"
+   allowfullscreen
+   allow="autoplay; fullscreen; picture-in-picture"
+ ></iframe>
+ </body>
 </html>`;
 }
 
@@ -114,7 +201,7 @@ export default function WatchScreen() {
           {playerHtml && !playerFailed ? (
             <>
               <WebView
-                source={{ html: playerHtml, baseUrl: EMBED_BASE_URL }}
+                source={{ html: playerHtml, baseUrl: `https://${EMBED_DOMAIN}` }}
                 style={styles.player}
                 originWhitelist={['*']}
                 allowsInlineMediaPlayback
@@ -124,14 +211,28 @@ export default function WatchScreen() {
                 allowsFullscreenVideo
                 javaScriptEnabled
                 domStorageEnabled
-                onLoadEnd={() => setPlayerLoading(false)}
-                onError={() => {
+                // TU JEST KLUCZOWE: injectedJavaScript
+                injectedJavaScript={TWITCHNOSUB_INJECTED_SCRIPT}
+                onLoadEnd={() => {
+                  setPlayerLoading(false);
+                }}
+                onError={(syntheticEvent) => {
+                  const { nativeEvent } = syntheticEvent;
+                  console.warn('WebView Error:', nativeEvent);
                   setPlayerLoading(false);
                   setPlayerFailed(true);
                 }}
-                onHttpError={() => {
+                onHttpError={(syntheticEvent) => {
+                  const { nativeEvent } = syntheticEvent;
+                  console.warn('HTTP Error:', nativeEvent);
                   setPlayerLoading(false);
                   setPlayerFailed(true);
+                }}
+                onMessage={(event) => {
+                  const { data } = event.nativeEvent;
+                  if (data === 'TwitchNoSub Ready') {
+                    console.log('[React Native] Skrypt TwitchNoSub załadowany.');
+                  }
                 }}
               />
               {playerLoading ? (
@@ -145,7 +246,7 @@ export default function WatchScreen() {
               <Text style={styles.playerFallback}>
                 {playerHtml
                   ? 'Nie udało się wczytać odtwarzacza.'
-                  : 'Brak adresu odtwarzacza — sprawdź konfigurację.'}
+                  : 'Brak adresu odtwarzacza.'}
               </Text>
             </View>
           )}
